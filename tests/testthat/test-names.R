@@ -501,3 +501,16 @@ test_that("make_syntactic(): dot dot then number then non-character", {
     c("..0.", "..1.", "..22.", "..333.")
   )
 })
+
+# Encoding -------------------------------------------------------------
+
+test_that("Name repair works with non-UTF-8 names", {
+  x1 <- "fa\u00e7ile"
+  skip_if_not(Encoding(x1) == "UTF-8")
+
+  x2 <- iconv(x1, from = "UTF-8", to = "latin1")
+  skip_if_not(Encoding(x2) == "latin1")
+
+  x3 <- c(x2, x2)
+  expect_equal(vec_as_names(x3, repair = "unique"), paste0(x3, "...", 1:2))
+})
