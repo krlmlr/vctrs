@@ -1143,6 +1143,84 @@ SEXP r_as_function(SEXP x, const char* arg) {
   }
 }
 
+static SEXP syms_try_catch_hnd = NULL;
+static inline SEXP try_catch_hnd(SEXP ptr) {
+  SEXP call = PROTECT(Rf_lang2(syms_try_catch_hnd, ptr));
+  SEXP out = Rf_eval(call, vctrs_ns_env);
+  UNPROTECT(1);
+  return out;
+}
+
+struct r_try_catch_data {
+  void (*fn)(void*);
+  void* fn_data;
+
+  SEXP cnd_sym;
+
+  void (*hnd)(void*);
+  void* hnd_data;
+
+  ERR err;
+};
+
+// [[ register() ]]
+SEXP vctrs_try_catch_callback(SEXP ptr, SEXP cnd) {
+  struct r_try_catch_data* data = (struct r_try_catch_data*) R_ExternalPtrAddr(ptr);
+
+  if (cnd == R_NilValue) {
+    if (data->fn) {
+      data->fn(data->fn_data);
+    }
+  } else {
+    data->err = cnd;
+    if (data->hnd) {
+      data->hnd(data->hnd_data);
+    }
+  }
+
+  return R_NilValue;
+}
+
+static SEXP syms_try_catch_impl = NULL;
+
+// [[ include("utils.h") ]]
+ERR r_try_catch(void (*fn)(void*),
+                void* fn_data,
+                SEXP cnd_sym,
+                void (*hnd)(void*),
+                void* hnd_data) {
+
+  struct r_try_catch_data data = {
+    .fn = fn,
+    .fn_data = fn_data,
+    .cnd_sym = cnd_sym,
+    .hnd = hnd,
+    .hnd_data = hnd_data,
+    .err = NULL
+  };
+  SEXP xptr = PROTECT(R_MakeExternalPtr(&data, R_NilValue, R_NilValue));
+  SEXP hnd_fn = PROTECT(try_catch_hnd(xptr));
+
+  SEXP syms[3] = {
+    syms_data,
+    cnd_sym,
+    NULL
+  };
+  SEXP args[3] = {
+    xptr,
+    hnd_fn,
+    NULL
+  };
+
+  SEXP call = PROTECT(r_call(syms_try_catch_impl, syms, args));
+  Rf_eval(call, vctrs_ns_env);
+
+  UNPROTECT(3);
+  return data.err;
+}
+
+SEXP (*rlang_sym_as_character)(SEXP x);
+
 
 SEXP vctrs_ns_env = NULL;
 SEXP vctrs_shared_empty_str = NULL;
@@ -1185,6 +1263,8 @@ SEXP chrs_negate = NULL;
 SEXP chrs_numeric = NULL;
 SEXP chrs_character = NULL;
 SEXP chrs_empty = NULL;
+SEXP chrs_cast = NULL;
+SEXP chrs_error = NULL;
 
 SEXP syms_i = NULL;
 SEXP syms_n = NULL;
@@ -1213,10 +1293,21 @@ SEXP syms_subscript_action = NULL;
 SEXP syms_subscript_type = NULL;
 SEXP syms_repair = NULL;
 SEXP syms_tzone = NULL;
+SEXP syms_data = NULL;
+SEXP syms_vctrs_error_incompatible_type = NULL;
+SEXP syms_vctrs_error_cast_lossy = NULL;
+SEXP syms_cnd_signal = NULL;
+SEXP syms_logical = NULL;
+SEXP syms_numeric = NULL;
+SEXP syms_character = NULL;
+SEXP syms_body = NULL;
+SEXP syms_parent = NULL;
 
 SEXP fns_bracket = NULL;
 SEXP fns_quote = NULL;
 SEXP fns_names = NULL;
+
+SEXP result_attrib = NULL;
 
 struct vctrs_arg args_empty_;
 struct vctrs_arg* args_empty = NULL;
@@ -1352,6 +1443,12 @@ void vctrs_init_utils(SEXP ns) {
   chrs_empty = Rf_mkString("");
   R_PreserveObject(chrs_empty);
 
+  chrs_cast = Rf_mkString("cast");
+  R_PreserveObject(chrs_cast);
+
+  chrs_error = Rf_mkString("error");
+  R_PreserveObject(chrs_error);
+
 
   classes_tibble = Rf_allocVector(STRSXP, 3);
   R_PreserveObject(classes_tibble);
@@ -1466,6 +1563,17 @@ void vctrs_init_utils(SEXP ns) {
   syms_subscript_type = Rf_install("subscript_type");
   syms_repair = Rf_install("repair");
   syms_tzone = Rf_install("tzone");
+  syms_data = Rf_install("data");
+  syms_try_catch_impl = Rf_install("try_catch_impl");
+  syms_try_catch_hnd = Rf_install("try_catch_hnd");
+  syms_vctrs_error_incompatible_type = Rf_install("vctrs_error_incompatible_type");
+  syms_vctrs_error_cast_lossy = Rf_install("vctrs_error_cast_lossy");
+  syms_cnd_signal = Rf_install("cnd_signal");
+  syms_logical = Rf_install("logical");
+  syms_numeric = Rf_install("numeric");
+  syms_character = Rf_install("character");
+  syms_body = Rf_install("body");
+  syms_parent = Rf_install("parent");
 
   fns_bracket = Rf_findVar(syms_bracket, R_BaseEnv);
   fns_quote = Rf_findVar(Rf_install("quote"), R_BaseEnv);
@@ -1494,6 +1602,7 @@ void vctrs_init_utils(SEXP ns) {
   rlang_unbox = (SEXP (*)(SEXP)) R_GetCCallable("rlang", "rlang_unbox");
   rlang_env_dots_values = (SEXP (*)(SEXP)) R_GetCCallable("rlang", "rlang_env_dots_values");
   rlang_env_dots_list = (SEXP (*)(SEXP)) R_GetCCallable("rlang", "rlang_env_dots_list");
+  rlang_sym_as_character = (SEXP (*)(SEXP)) R_GetCCallable("rlang", "rlang_sym_as_character");
 
   syms_as_data_frame2 = Rf_install("as.data.frame2");
   syms_colnames = Rf_install("colnames");
@@ -1508,6 +1617,25 @@ void vctrs_init_utils(SEXP ns) {
   compact_rep_attrib = Rf_cons(R_NilValue, R_NilValue);
   R_PreserveObject(compact_rep_attrib);
   SET_TAG(compact_rep_attrib, Rf_install("vctrs_compact_rep"));
+
+  {
+    SEXP result_names = PROTECT(Rf_allocVector(STRSXP, 2));
+    SET_STRING_ELT(result_names, 0, Rf_mkChar("ok"));
+    SET_STRING_ELT(result_names, 1, Rf_mkChar("err"));
+
+    result_attrib = PROTECT(Rf_cons(result_names, R_NilValue));
+    SET_TAG(result_attrib, R_NamesSymbol);
+
+    SEXP result_class = PROTECT(Rf_allocVector(STRSXP, 1));
+    SET_STRING_ELT(result_class, 0, Rf_mkChar("rlang_result"));
+
+    result_attrib = PROTECT(Rf_cons(result_class, result_attrib));
+    SET_TAG(result_attrib, R_ClassSymbol);
+
+    R_PreserveObject(result_attrib);
+    MARK_NOT_MUTABLE(result_attrib);
+    UNPROTECT(4);
+  }
 
   // We assume the following in `union vctrs_dbl_indicator`
   VCTRS_ASSERT(sizeof(double) == sizeof(int64_t));

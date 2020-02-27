@@ -131,3 +131,25 @@ unstructure <- function(x) {
   attributes(x) <- NULL
   x
 }
+
+# We almost never want `stringsAsFactors = TRUE`, and `FALSE` became
+# the default in R 4.0.0. This wrapper ensures that our tests are compliant
+# with versions of R before and after this change. Keeping it in `utils.R`
+# rather than as a testthat helper ensures that it is sourced before any other
+# testthat helpers.
+data.frame <- function(..., stringsAsFactors = NULL) {
+  stringsAsFactors <- stringsAsFactors %||% FALSE
+  base::data.frame(..., stringsAsFactors = stringsAsFactors)
+}
+
+try_catch_hnd <- function(data) {
+  function(cnd) {
+    .Call(vctrs_try_catch_callback, data, cnd)
+  }
+}
+try_catch_impl <- function(data, ...) {
+  tryCatch(
+    .Call(vctrs_try_catch_callback, data, NULL),
+    ...
+  )
+}
