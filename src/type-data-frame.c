@@ -62,7 +62,10 @@ SEXP vctrs_new_data_frame(SEXP args) {
 
   bool has_rownames = false;
 
+  SEXP x_names = r_names(x);
   SEXP out = PROTECT(r_maybe_duplicate(x));
+  SET_ATTRIB(out, R_NilValue);
+  Rf_setAttrib(out, R_NamesSymbol, x_names);
 
   R_len_t size = df_size_from_list(x, n);
 
