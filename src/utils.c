@@ -378,18 +378,23 @@ SEXP s3_find_method2(const char* generic,
   }
   PROTECT(class);
 
-  if (!Rf_length(class)) {
+  R_len_t len = Rf_length(class);
+  if (!len) {
     Rf_error("Internal error in `s3_find_method2()`: Class must have length.");
   }
-  class = STRING_ELT(class, 0);
 
-  SEXP method_sym = s3_paste_method_sym(generic, CHAR(class));
-  SEXP method = s3_sym_get_method(method_sym, table);
+  SEXP method = R_NilValue;
+  *method_sym_out = R_NilValue;
+  for (R_len_t i = 0; i < len; ++i) {
+    SEXP class_chr = STRING_ELT(class, i);
 
-  if (method == R_NilValue) {
-    *method_sym_out = R_NilValue;
-  } else {
-    *method_sym_out = method_sym;
+    SEXP method_sym = s3_paste_method_sym(generic, CHAR(class_chr));
+    SEXP method = s3_sym_get_method(method_sym, table);
+
+    if (method != R_NilValue) {
+      *method_sym_out = method_sym;
+      break;
+    }
   }
 
   UNPROTECT(1);
